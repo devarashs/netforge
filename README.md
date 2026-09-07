@@ -1,5 +1,8 @@
 # netforge
 
+[![CI](https://github.com/devarashs/netforge/actions/workflows/ci.yml/badge.svg)](https://github.com/devarashs/netforge/actions/workflows/ci.yml)
+[![Release](https://github.com/devarashs/netforge/actions/workflows/release.yml/badge.svg)](https://github.com/devarashs/netforge/actions/workflows/release.yml)
+
 A single-binary **network and security toolkit** written in Go, with **zero
 third-party dependencies** — everything is built on the standard library,
 including hand-assembled IPv4/TCP packets, a from-scratch PBKDF2 key derivation,
@@ -25,13 +28,39 @@ homelab: generate a cert, encrypt a file, scan a box, watch a service.
 ## Install
 
 ```bash
+# Prebuilt binaries: grab one from the Releases page
+#   https://github.com/devarashs/netforge/releases/latest
+
 go install github.com/devarashs/netforge@latest
 # or from a clone:
-make build      # produces ./netforge
+make build      # produces ./netforge (version stamped from git)
 make cross      # cross-compiles linux/darwin/windows into dist/
+
+netforge version   # prints version, commit and build date
 ```
 
 Go 1.24+ required. No `go.sum`, no modules to download — it builds offline.
+
+## Releases & versioning
+
+Releases are automated. Every push to `main` runs CI (gofmt, `go vet`,
+race-enabled tests, build); if it's green, the release workflow computes the
+next [semantic version](https://semver.org) and publishes a GitHub Release with
+cross-compiled binaries (linux/darwin/windows, amd64/arm64) and a
+`checksums.txt`.
+
+The version bump is derived from the commit messages since the last tag
+([Conventional Commits](https://www.conventionalcommits.org)):
+
+| Commit contains          | Bump    |
+| ------------------------ | ------- |
+| `BREAKING CHANGE` or `!:`| major   |
+| `feat:` / `feat(scope):` | minor   |
+| anything else            | patch   |
+
+The version is baked into the binary via `-ldflags`, so `netforge version`
+reports exactly what was built. Add `[skip release]` to a commit message to push
+to `main` without cutting a release.
 
 ## Usage
 

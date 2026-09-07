@@ -20,11 +20,26 @@ import (
 	"github.com/devarashs/netforge/internal/stress"
 )
 
+// Build metadata, injected at link time via -ldflags "-X main.version=...".
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 func main() {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "version", "-version", "--version":
+			fmt.Printf("netforge %s (commit %s, built %s)\n", version, commit, date)
+			return
+		}
+	}
+
 	root := &cli.Command{
 		Name:  "netforge",
 		Short: "network & security toolkit",
-		Long:  "netforge — stress testing, certificates, cryptography, and network diagnostics.",
+		Long:  "netforge — stress testing, certificates, cryptography, and network diagnostics.\nRun 'netforge version' to print build information.",
 		Sub: []*cli.Command{
 			stress.Command(),
 			certtool.Command(),

@@ -1,0 +1,136 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+# Needed to push tags and publish releases.
+permissions:
+  contents: write
+
+# Never run two releases at once; a tag push must fully settle first.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # Allow opting out of a release for a given commit.
+    if: ${{ !contains(github.event.head_commit.message, '[skip release]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history + tags for versioning
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache: true
+
+      # Gate: never release a broken build.
+      - name: Verify
+        run: |
+          go vet ./...
+          go test ./...
+
+      # Derive the next semantic version from the latest tag and the commit
+      # messages since it (Conventional-Commits style):
+      #   BREAKING CHANGE / "!:"  -> major
+      #   feat: / feat(scope):    -> minor
+      #   anything else           -> patch
+      - name: Compute version
+        id: version
+        run: |
+          set -euo pipefail
+          git fetch --tags --force
+
+          latest=$(git tag --list 'v*' --sort=-v:refname | head -n1 || true)
+          if [ -z "$latest" ]; then
+            prev=""; major=0; minor=0; patch=0; range="HEAD"
+          else
+            prev="$latest"
+            ver="${latest#v}"
+            major="${ver%%.*}"; rest="${ver#*.}"
+            minor="${rest%%.*}"; patch="${rest##*.}"
+            range="${latest}..HEAD"
+          fi
+
+          if [ -n "$prev" ] && [ -z "$(git log --oneline "$range")" ]; then
+            echo "Nothing new since $prev — skipping release."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          subjects=$(git log --format=%B "$range")
+          if [ -z "$prev" ]; then
+            major=0; minor=1; patch=0          # first release: v0.1.0
+          elif echo "$subjects" | grep -qE 'BREAKING CHANGE|!:'; then
+            major=$((major + 1)); minor=0; patch=0
+          elif echo "$subjects" | grep -qiE '^[[:space:]]*feat(\(|:)'; then
+            minor=$((minor + 1)); patch=0
+          else
+            patch=$((patch + 1))
+          fi
+
+          # Guarantee the tag is free (safe across re-runs).
+          while git rev-parse "v${major}.${minor}.${patch}" >/dev/null 2>&1; do
+            patch=$((patch + 1))
+          done
+
+          new="v${major}.${minor}.${patch}"
+          echo "Next version: $new (previous: ${prev:-none})"
+          echo "release=true" >> "$GITHUB_OUTPUT"
+          echo "version=$new" >> "$GITHUB_OUTPUT"
+          echo "prev=$prev"   >> "$GITHUB_OUTPUT"
+
+      - name: Build release binaries
+        if: steps.version.outputs.release == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          commit=$(git rev-parse --short HEAD)
+          date=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          ldflags="-s -w -X main.version=${VERSION} -X main.commit=${commit} -X main.date=${date}"
+          for t in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+            os="${t%/*}"; arch="${t#*/}"
+            name="netforge-${VERSION}-${os}-${arch}"
+            ext=""; [ "$os" = "windows" ] && ext=".exe"
+            echo "-> $name$ext"
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+              go build -trimpath -ldflags "$ldflags" -o "dist/${name}${ext}" .
+          done
+          ( cd dist && sha256sum netforge-* > checksums.txt )
+          ls -la dist
+
+      - name: Tag release
+        if: steps.version.outputs.release == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$VERSION" -m "netforge $VERSION"
+          git push origin "$VERSION"
+
+      - name: Publish GitHub Release
+        if: steps.version.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          PREV: ${{ steps.version.outputs.prev }}
+        run: |
+          set -euo pipefail
+          if [ -n "$PREV" ]; then
+            notes=$(git log --pretty='- %s (%h)' "${PREV}..HEAD")
+          else
+            notes=$(git log --pretty='- %s (%h)')
+          fi
+          [ -z "$notes" ] && notes="Maintenance release."
+          printf '## Changes\n\n%s\n' "$notes" > /tmp/notes.md
+          gh release create "$VERSION" dist/* \
+            --title "$VERSION" \
+            --notes-file /tmp/notes.md
