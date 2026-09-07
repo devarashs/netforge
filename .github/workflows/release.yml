@@ -3,6 +3,7 @@ name: Release
 on:
   push:
     branches: [main]
+  workflow_dispatch: {} # allow cutting a release manually from the Actions tab
 
 # Needed to push tags and publish releases.
 permissions:
@@ -15,8 +16,8 @@ concurrency:
 
 jobs:
   release:
-    # Allow opting out of a release for a given commit.
-    if: ${{ !contains(github.event.head_commit.message, '[skip release]') }}
+    # Manual dispatch always runs; pushes honor the skip-release opt-out token.
+    if: ${{ github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip release]') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
